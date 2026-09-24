@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { startLogin } from "@/const";
 
 type NavKey = "chat" | "profile" | "settings" | "ai";
 type ThemeMode = "light" | "dark" | "auto";
@@ -118,58 +119,69 @@ function Surface({ children, className = "" }: { children: ReactNode; className?
   return <section className={`wood-panel moss-speckle moss-clump overflow-hidden rounded-[24px] border border-[#9abc6d]/15 shadow-[0_18px_46px_rgba(0,0,0,.19)] ${className}`}>{children}</section>;
 }
 
-function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
+const RAVEN_ACCOUNTS_KEY = "raven-chat-accounts";
+const RAVEN_SESSION_KEY = "raven-chat-session";
+type RavenAccount = { name: string; email: string; passwordHash: string };
+
+async function hashRavenPassword(value: string) {
+  if (globalThis.crypto?.subtle) {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return btoa(unescape(encodeURIComponent(value)));
+}
+
+function readRavenAccounts(): RavenAccount[] {
+  try { return JSON.parse(localStorage.getItem(RAVEN_ACCOUNTS_KEY) || "[]") as RavenAccount[]; } catch { return []; }
+}
+
+function LoginScreen({ onLogin }: { onLogin: (name: string, remember: boolean) => void }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("admin@raven.chat");
   const [password, setPassword] = useState("raven-demo");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes("@")) { toast.error("Enter a valid email address"); return; }
+    if (password.length < 6) { toast.error("Password must be at least 6 characters"); return; }
+    if (mode === "signup" && !name.trim()) { toast.error("Enter your display name"); return; }
+    if (mode === "signup" && password !== confirmPassword) { toast.error("Passwords do not match"); return; }
     setLoading(true);
-    window.setTimeout(() => {
-      onLogin(email.split("@")[0] || "raven");
-      toast.success("Welcome back to the grove");
-      setLoading(false);
-    }, 500);
+    try {
+      const accounts = readRavenAccounts();
+      const passwordHash = await hashRavenPassword(password);
+      if (mode === "signup") {
+        if (accounts.some((account) => account.email === normalizedEmail)) { toast.error("An account with this email already exists"); return; }
+        const account = { name: name.trim(), email: normalizedEmail, passwordHash };
+        localStorage.setItem(RAVEN_ACCOUNTS_KEY, JSON.stringify([...accounts, account]));
+        if (remember) localStorage.setItem(RAVEN_SESSION_KEY, JSON.stringify({ name: account.name, email: account.email }));
+        toast.success("Account created — welcome to the grove");
+        onLogin(account.name, remember);
+      } else {
+        const isDemo = normalizedEmail === "admin@raven.chat" && password === "raven-demo";
+        const account = accounts.find((item) => item.email === normalizedEmail && item.passwordHash === passwordHash);
+        if (!isDemo && !account) { toast.error("Email or password is incorrect"); return; }
+        const displayName = account?.name || normalizedEmail.split("@")[0] || "raven";
+        if (remember) localStorage.setItem(RAVEN_SESSION_KEY, JSON.stringify({ name: displayName, email: normalizedEmail }));
+        toast.success("Welcome back to the grove");
+        onLogin(displayName, remember);
+      }
+    } finally { setLoading(false); }
   }
 
-  return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0b1813] px-5 py-8 text-[#edf2e6]">
-      <div className="absolute inset-0 opacity-80 [background-image:radial-gradient(circle_at_15%_25%,rgba(119,157,78,.18),transparent_22%),radial-gradient(circle_at_84%_74%,rgba(82,117,67,.2),transparent_24%),linear-gradient(120deg,#10251d,#07100d_60%,#1a2d1f)]" />
-      <div className="absolute -left-32 top-20 h-96 w-96 rounded-full border border-[#8daf65]/10 bg-[#829f4a]/5 blur-2xl" />
-      <div className="absolute -right-20 bottom-0 h-[32rem] w-[32rem] rounded-full border border-[#8daf65]/10 bg-[#526f3c]/10 blur-3xl" />
-      <div className="relative grid w-full max-w-5xl overflow-hidden rounded-[34px] border border-[#bad88b]/15 bg-[#11231c]/88 shadow-[0_28px_90px_rgba(0,0,0,.44)] backdrop-blur-xl lg:grid-cols-[1.03fr_.97fr]">
-        <div className="relative hidden min-h-[650px] overflow-hidden border-r border-[#bad88b]/10 lg:block">
-          <div className="absolute inset-0 opacity-75 wood-panel" />
-          <div className="absolute inset-0 bg-[linear-gradient(145deg,rgba(10,29,20,.08),rgba(9,18,13,.88))]" />
-          <div className="relative flex h-full flex-col justify-between p-12">
-            <div className="flex items-center gap-3"><RavenMark size="sm" /><div><div className="font-display text-2xl font-semibold tracking-wide">Raven Chat</div><div className="text-[10px] uppercase tracking-[.28em] text-[#a6c77b]">A quieter way to connect</div></div></div>
-            <div>
-              <div className="mb-5 flex items-center gap-2 text-xs uppercase tracking-[.3em] text-[#b3ce88]"><Leaf className="h-4 w-4" /> Enter the grove</div>
-              <h1 className="max-w-sm font-display text-6xl leading-[.9] text-[#f2e8d1]">Messages that feel like <span className="text-[#b5d77b]">home.</span></h1>
-              <p className="mt-6 max-w-sm text-sm leading-7 text-[#c1cbb8]">A private corner for conversations, slow mornings, and the people you never want to lose.</p>
-            </div>
-            <div className="flex gap-3 text-xs text-[#8ea48c]"><span className="rounded-full border border-[#b5d77b]/20 px-3 py-2">Private by design</span><span className="rounded-full border border-[#b5d77b]/20 px-3 py-2">Built for presence</span></div>
-          </div>
-        </div>
-        <div className="flex items-center px-6 py-10 sm:px-12 lg:px-14">
-          <div className="w-full max-w-md">
-            <div className="mb-9 flex items-center gap-3 lg:hidden"><RavenMark size="sm" /><div><div className="font-display text-2xl font-semibold">Raven Chat</div><div className="text-[10px] uppercase tracking-[.24em] text-[#a6c77b]">The grove is open</div></div></div>
-            <div className="mb-8"><p className="mb-3 text-xs font-semibold uppercase tracking-[.28em] text-[#a5c476]">Admin access</p><h2 className="font-display text-5xl leading-none text-[#f3ead7]">Welcome back.</h2><p className="mt-4 text-sm leading-6 text-[#aab9a8]">Sign in to your quiet place for conversations.</p></div>
-            <form onSubmit={submit} className="space-y-5">
-              <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-[.15em] text-[#a6b7a2]">Email address</span><div className="relative"><UserRound className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#72915c]" /><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className="focus-ring w-full rounded-2xl border border-[#a5c477]/15 bg-[#0a1914]/70 px-11 py-3.5 text-sm text-[#edf2e6] outline-none transition focus:border-[#a5c477]/55" placeholder="you@raven.chat" /></div></label>
-              <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-[.15em] text-[#a6b7a2]">Password</span><div className="relative"><Shield className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#72915c]" /><input value={password} onChange={(e) => setPassword(e.target.value)} type={showPassword ? "text" : "password"} className="focus-ring w-full rounded-2xl border border-[#a5c477]/15 bg-[#0a1914]/70 px-11 py-3.5 pr-12 text-sm text-[#edf2e6] outline-none transition focus:border-[#a5c477]/55" placeholder="Your password" /><button type="button" aria-label="Toggle password visibility" onClick={() => setShowPassword((v) => !v)} className="focus-ring absolute right-4 top-1/2 -translate-y-1/2 text-[#789966] hover:text-[#c6e893]">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></label>
-              <div className="flex items-center justify-between text-xs"><button type="button" className="flex items-center gap-2 text-[#aebfa6]" onClick={() => setRemember((v) => !v)}><span className={`grid h-4 w-4 place-items-center rounded-md border transition ${remember ? "border-[#a9ce76] bg-[#90b661] text-[#132219]" : "border-[#8ca57e]/30"}`}>{remember && <Check className="h-3 w-3" />}</span> Remember this device</button><button type="button" onClick={() => toast("Ask the owner to reset your Raven access.")} className="text-[#b4d27f] hover:text-[#d5efaa]">Forgot password?</button></div>
-              <button disabled={loading} className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-[#a8ca73] px-5 py-3.5 text-sm font-bold text-[#172318] shadow-[0_10px_25px_rgba(128,166,76,.18)] transition hover:bg-[#c3e390] active:scale-[.98] disabled:opacity-70">{loading ? "Opening the grove…" : "Enter Raven Chat"}<ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" /></button>
-            </form>
-            <div className="mt-9 flex items-center gap-3 text-[11px] text-[#718979]"><div className="h-px flex-1 bg-[#aac779]/10" /><span>encrypted conversations</span><div className="h-px flex-1 bg-[#aac779]/10" /></div>
-          </div>
-        </div>
-      </div>
-    </main>
-  );
+  function continueWithGoogle() {
+    toast("Opening secure Google sign-in…");
+    startLogin();
+  }
+
+  return <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0b1813] px-5 py-8 text-[#edf2e6]"><div className="absolute inset-0 opacity-80 [background-image:radial-gradient(circle_at_15%_25%,rgba(119,157,78,.18),transparent_22%),radial-gradient(circle_at_84%_74%,rgba(82,117,67,.2),transparent_24%),linear-gradient(120deg,#10251d,#07100d_60%,#1a2d1f)]" /><div className="absolute -left-32 top-20 h-96 w-96 rounded-full border border-[#8daf65]/10 bg-[#829f4a]/5 blur-2xl" /><div className="absolute -right-20 bottom-0 h-[32rem] w-[32rem] rounded-full border border-[#8daf65]/10 bg-[#526f3c]/10 blur-3xl" /><div className="relative grid w-full max-w-5xl overflow-hidden rounded-[34px] border border-[#bad88b]/15 bg-[#11231c]/88 shadow-[0_28px_90px_rgba(0,0,0,.44)] backdrop-blur-xl lg:grid-cols-[1.03fr_.97fr]"><div className="relative hidden min-h-[650px] overflow-hidden border-r border-[#bad88b]/10 lg:block"><div className="absolute inset-0 opacity-75 wood-panel" /><div className="absolute inset-0 bg-[linear-gradient(145deg,rgba(10,29,20,.08),rgba(9,18,13,.88))]" /><div className="relative flex h-full flex-col justify-between p-12"><div className="flex items-center gap-3"><RavenMark size="sm" /><div><div className="font-display text-2xl font-semibold tracking-wide">Raven Chat</div><div className="text-[10px] uppercase tracking-[.28em] text-[#a6c77b]">A quieter way to connect</div></div></div><div><div className="mb-5 flex items-center gap-2 text-xs uppercase tracking-[.3em] text-[#b3ce88]"><Leaf className="h-4 w-4" /> Enter the grove</div><h1 className="max-w-sm font-display text-6xl leading-[.9] text-[#f2e8d1]">Messages that feel like <span className="text-[#b5d77b]">home.</span></h1><p className="mt-6 max-w-sm text-sm leading-7 text-[#c1cbb8]">A private corner for conversations, slow mornings, and the people you never want to lose.</p></div><div className="flex gap-3 text-xs text-[#8ea48c]"><span className="rounded-full border border-[#b5d77b]/20 px-3 py-2">Private by design</span><span className="rounded-full border border-[#b5d77b]/20 px-3 py-2">Built for presence</span></div></div></div><div className="flex items-center px-6 py-10 sm:px-12 lg:px-14"><div className="w-full max-w-md"><div className="mb-9 flex items-center gap-3 lg:hidden"><RavenMark size="sm" /><div><div className="font-display text-2xl font-semibold">Raven Chat</div><div className="text-[10px] uppercase tracking-[.24em] text-[#a6c77b]">The grove is open</div></div></div><div className="mb-7"><p className="mb-3 text-xs font-semibold uppercase tracking-[.28em] text-[#a5c476]">{mode === "login" ? "Welcome back" : "Join the grove"}</p><h2 className="font-display text-5xl leading-none text-[#f3ead7]">{mode === "login" ? "Welcome back." : "Create your account."}</h2><p className="mt-4 text-sm leading-6 text-[#aab9a8]">{mode === "login" ? "Sign in to your quiet place for conversations." : "Make a private corner for the people you never want to lose."}</p></div><div className="mb-5 grid grid-cols-2 rounded-2xl border border-[#a5c477]/12 bg-[#0a1914]/55 p-1"><button type="button" onClick={() => setMode("login")} className={`rounded-xl py-2.5 text-xs font-semibold ${mode === "login" ? "bg-[#a8ca73] text-[#172318]" : "text-[#91a690]"}`}>Log in</button><button type="button" onClick={() => setMode("signup")} className={`rounded-xl py-2.5 text-xs font-semibold ${mode === "signup" ? "bg-[#a8ca73] text-[#172318]" : "text-[#91a690]"}`}>Sign up</button></div><form onSubmit={submit} className="space-y-4">{mode === "signup" && <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-[.15em] text-[#a6b7a2]">Display name</span><div className="relative"><UserRound className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#72915c]" /><input value={name} onChange={(e) => setName(e.target.value)} className="focus-ring w-full rounded-2xl border border-[#a5c477]/15 bg-[#0a1914]/70 px-11 py-3.5 text-sm text-[#edf2e6] outline-none" placeholder="Raven" /></div></label>}<label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-[.15em] text-[#a6b7a2]">Email address</span><div className="relative"><UserRound className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#72915c]" /><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className="focus-ring w-full rounded-2xl border border-[#a5c477]/15 bg-[#0a1914]/70 px-11 py-3.5 text-sm text-[#edf2e6] outline-none" placeholder="you@raven.chat" /></div></label><label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-[.15em] text-[#a6b7a2]">Password</span><div className="relative"><Shield className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#72915c]" /><input value={password} onChange={(e) => setPassword(e.target.value)} type={showPassword ? "text" : "password"} className="focus-ring w-full rounded-2xl border border-[#a5c477]/15 bg-[#0a1914]/70 px-11 py-3.5 pr-12 text-sm text-[#edf2e6] outline-none" placeholder="At least 6 characters" /><button type="button" aria-label="Toggle password visibility" onClick={() => setShowPassword((v) => !v)} className="focus-ring absolute right-4 top-1/2 -translate-y-1/2 text-[#789966]">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></label>{mode === "signup" && <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-[.15em] text-[#a6b7a2]">Confirm password</span><div className="relative"><Shield className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#72915c]" /><input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} type="password" className="focus-ring w-full rounded-2xl border border-[#a5c477]/15 bg-[#0a1914]/70 px-11 py-3.5 text-sm text-[#edf2e6] outline-none" placeholder="Repeat your password" /></div></label>}<button type="button" className="flex items-center gap-2 text-xs text-[#aebfa6]" onClick={() => setRemember((v) => !v)}><span className={`grid h-4 w-4 place-items-center rounded-md border transition ${remember ? "border-[#a9ce76] bg-[#90b661] text-[#132219]" : "border-[#8ca57e]/30"}`}>{remember && <Check className="h-3 w-3" />}</span> Remember this device</button><button disabled={loading} className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-[#a8ca73] px-5 py-3.5 text-sm font-bold text-[#172318] shadow-[0_10px_25px_rgba(128,166,76,.18)] transition hover:bg-[#c3e390] active:scale-[.98] disabled:opacity-70">{loading ? "Opening the grove…" : mode === "login" ? "Enter Raven Chat" : "Create account"}<ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" /></button></form><div className="my-5 flex items-center gap-3 text-[11px] text-[#718979]"><div className="h-px flex-1 bg-[#aac779]/10" /><span>or continue with</span><div className="h-px flex-1 bg-[#aac779]/10" /></div><button type="button" onClick={continueWithGoogle} className="flex w-full items-center justify-center gap-3 rounded-2xl border border-[#c4d8bc]/14 bg-[#eef5ea] px-5 py-3.5 text-sm font-semibold text-[#172318] hover:bg-white"><span className="grid h-5 w-5 place-items-center rounded-full bg-white text-sm font-bold text-[#4285f4]">G</span> Continue with Google</button><div className="mt-6 flex items-center gap-3 text-[11px] text-[#718979]"><div className="h-px flex-1 bg-[#aac779]/10" /><span>encrypted conversations</span><div className="h-px flex-1 bg-[#aac779]/10" /></div></div></div></div></main>;
 }
 
 function EmptyChat() {
@@ -318,7 +330,21 @@ function Dashboard({ displayName, onLogout }: { displayName: string; onLogout: (
 }
 
 export default function Home() {
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [displayName, setDisplayName] = useState("admin");
-  return loggedIn ? <Dashboard displayName={displayName} onLogout={() => { setLoggedIn(false); toast("You have left the grove"); }} /> : <LoginScreen onLogin={(name) => { setDisplayName(name); setLoggedIn(true); }} />;
+  const [displayName, setDisplayName] = useState(() => {
+    try { return (JSON.parse(localStorage.getItem(RAVEN_SESSION_KEY) || "null") as { name?: string } | null)?.name || "admin"; } catch { return "admin"; }
+  });
+  const [loggedIn, setLoggedIn] = useState(() => {
+    try { return Boolean(localStorage.getItem(RAVEN_SESSION_KEY)); } catch { return false; }
+  });
+  const handleLogin = (name: string, remember: boolean) => {
+    setDisplayName(name);
+    setLoggedIn(true);
+    if (!remember) { try { localStorage.removeItem(RAVEN_SESSION_KEY); } catch {} }
+  };
+  const handleLogout = () => {
+    try { localStorage.removeItem(RAVEN_SESSION_KEY); } catch {}
+    setLoggedIn(false);
+    toast("You have left the grove");
+  };
+  return loggedIn ? <Dashboard displayName={displayName} onLogout={handleLogout} /> : <LoginScreen onLogin={handleLogin} />;
 }
