@@ -90,6 +90,28 @@ button { cursor: pointer; }
 .moss-rind {
   box-shadow: inset 0 1px rgba(224, 235, 174, .12), inset 0 -10px 22px rgba(21, 55, 29, .16), 0 12px 30px rgba(0, 0, 0, .18);
 }
+.settings-screen {
+  background-color: #111c25;
+  background-image: radial-gradient(ellipse at 50% 0%, rgba(77, 126, 99, .12), transparent 38%), linear-gradient(180deg, rgba(17, 28, 37, .92), rgba(8, 20, 16, .98));
+}
+.settings-card {
+  background: linear-gradient(145deg, rgba(31, 45, 57, .96), rgba(24, 37, 48, .96));
+  border: 1px solid rgba(171, 200, 214, .06);
+  box-shadow: inset 0 1px rgba(255,255,255,.035), 0 16px 34px rgba(0,0,0,.16);
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+  border-bottom: 1px solid rgba(179, 204, 214, .07);
+}
+.settings-row:last-child { border-bottom: 0; }
+@media (max-width: 520px) {
+  .settings-row { gap: .75rem; padding: 1rem; }
+  .settings-row h2 { font-size: 1rem; }
+  .settings-row p { font-size: .75rem; line-height: 1.25rem; }
+}
 .paper-texture {
   background-color: #f2e8d1;
   background-image:
