@@ -3,6 +3,8 @@ import { invokeLLM } from "./_core/llm";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import { insertChatMessage, listChatMessages } from "./db";
+import { storagePut } from "./storage";
 import { z } from "zod";
 
 export const appRouter = router({
@@ -46,6 +48,47 @@ export const appRouter = router({
           };
         }
         return { text: "I’m here with you. Try asking that in a different way." };
+      }),
+  }),
+
+  messages: router({
+    list: publicProcedure
+      .input(z.object({ conversationId: z.string().min(1).max(64) }))
+      .query(async ({ input }) => {
+        const rows = await listChatMessages(input.conversationId);
+        return rows.map((row) => ({ ...row, mediaUrl: row.mediaKey ? `/manus-storage/${row.mediaKey}` : undefined }));
+      }),
+    createText: publicProcedure
+      .input(z.object({ conversationId: z.string().min(1).max(64), senderKey: z.string().min(1).max(128), text: z.string().min(1).max(4000) }))
+      .mutation(async ({ input }) => insertChatMessage({ ...input, kind: "text" })),
+    uploadMedia: publicProcedure
+      .input(z.object({
+        conversationId: z.string().min(1).max(64),
+        senderKey: z.string().min(1).max(128),
+        kind: z.enum(["image", "voice"]),
+        fileName: z.string().min(1).max(255),
+        mimeType: z.string().min(1).max(128),
+        dataBase64: z.string().min(1).max(12_000_000),
+      }))
+      .mutation(async ({ input }) => {
+        const bytes = Buffer.from(input.dataBase64, "base64");
+        const maxBytes = input.kind === "image" ? 8 * 1024 * 1024 : 16 * 1024 * 1024;
+        if (bytes.byteLength > maxBytes) throw new Error(`Media must be smaller than ${input.kind === "image" ? "8 MB" : "16 MB"}`);
+        if (input.kind === "image" && !input.mimeType.startsWith("image/")) throw new Error("Image MIME type required");
+        if (input.kind === "voice" && !input.mimeType.startsWith("audio/")) throw new Error("Audio MIME type required");
+        const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const stored = await storagePut(`raven-chat/${input.conversationId}/${Date.now()}-${safeName}`, bytes, input.mimeType);
+        const message = await insertChatMessage({
+          conversationId: input.conversationId,
+          senderKey: input.senderKey,
+          kind: input.kind,
+          text: input.kind === "voice" ? "Voice message" : null,
+          mediaKey: stored.key,
+          mediaName: input.fileName,
+          mimeType: input.mimeType,
+          byteSize: bytes.byteLength,
+        });
+        return { ...message, mediaUrl: stored.url, storageKey: stored.key };
       }),
   }),
 
