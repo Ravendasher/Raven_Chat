@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import {
   ArrowRight,
   Camera,
@@ -20,6 +20,7 @@ import {
   Leaf,
   LogOut,
   Menu,
+  Mic,
   MessageCircle,
   Moon,
   MoreHorizontal,
@@ -31,6 +32,7 @@ import {
   Settings,
   Shield,
   Sparkles,
+  Square,
   Sun,
   UserRound,
   UsersRound,
@@ -62,6 +64,9 @@ type Message = {
   text: string;
   time: string;
   translated?: string;
+  kind?: "text" | "image" | "voice";
+  mediaUrl?: string;
+  mediaName?: string;
 };
 
 const conversations: Conversation[] = [
@@ -193,32 +198,67 @@ function ChatView({ currentConversation, onBack }: { currentConversation: Conver
   const [draft, setDraft] = useState("");
   const [showTranslation, setShowTranslation] = useState(true);
   const [translatedIds, setTranslatedIds] = useState<number[]>([1, 3]);
+  const [recording, setRecording] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const appendMessage = (message: Omit<Message, "id" | "from" | "time">) => {
+    setMessages((items) => [...items, { id: Date.now(), from: "me", time: "now", ...message }]);
+  };
 
   const sendMessage = () => {
     const text = draft.trim();
     if (!text) return;
-    setMessages((items) => [...items, { id: Date.now(), from: "me", text, time: "now" }]);
+    appendMessage({ text, kind: "text" });
     setDraft("");
-    window.setTimeout(() => setMessages((items) => [...items, { id: Date.now() + 1, from: "them", text: "ရောက်ပြီ။ ခဏနေရင် ပြန်ပြောမယ် 🌿", time: "now" }]), 800);
+    window.setTimeout(() => setMessages((items) => [...items, { id: Date.now() + 1, from: "them", text: "ရောက်ပြီ။ ခဏနေရင် ပြန်ပြောမယ် 🌿", time: "now", kind: "text" }]), 800);
   };
 
+  const handleImageSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast.error("Please choose an image file"); return; }
+    if (file.size > 8 * 1024 * 1024) { toast.error("Images must be smaller than 8 MB"); return; }
+    appendMessage({ text: "", kind: "image", mediaUrl: URL.createObjectURL(file), mediaName: file.name });
+    toast.success("Image attached");
+  };
+
+  const startRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") { toast.error("Voice recording is not supported in this browser"); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data); };
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        appendMessage({ text: "Voice message", kind: "voice", mediaUrl: url, mediaName: "voice-message.webm" });
+        stream.getTracks().forEach((track) => track.stop());
+        recorderRef.current = null;
+        setRecording(false);
+        toast.success("Voice message added");
+      };
+      recorder.start();
+      recorderRef.current = recorder;
+      setRecording(true);
+      toast("Recording… tap the square to send");
+    } catch { toast.error("Microphone permission is needed for voice messages"); }
+  };
+
+  const stopRecording = () => { if (recorderRef.current?.state === "recording") recorderRef.current.stop(); };
   const translate = (message: Message) => {
-    if (translatedIds.includes(message.id)) {
-      setTranslatedIds((ids) => ids.filter((id) => id !== message.id));
-    } else {
-      setTranslatedIds((ids) => [...ids, message.id]);
-      toast.success("Translation shown in Burmese");
-    }
+    if (translatedIds.includes(message.id)) setTranslatedIds((ids) => ids.filter((id) => id !== message.id));
+    else { setTranslatedIds((ids) => [...ids, message.id]); toast.success("Translation shown in Burmese"); }
   };
 
   return <div className="chat-room flex h-[100dvh] min-h-screen min-w-0 flex-col overflow-hidden">
     <div className="chat-room-header flex shrink-0 items-center justify-between px-3 py-3 sm:px-5"><div className="flex min-w-0 items-center gap-3"><button onClick={onBack} aria-label="Back to chats" className="focus-ring grid h-12 w-12 shrink-0 place-items-center rounded-full border border-[#b9d5df]/15 bg-[#243646]/90 text-[#edf4f1] shadow-[0_8px_25px_rgba(0,0,0,.25)] hover:bg-[#314a5b]"><ArrowRight className="h-6 w-6 rotate-180" /></button><div className="flex min-w-0 items-center gap-3 rounded-full border border-[#b9d5df]/14 bg-[#1b2c3b]/90 px-3 py-2 shadow-[0_8px_28px_rgba(0,0,0,.24)]"><div className="rounded-full ring-2 ring-[#bed8dc]/10"><Avatar conversation={currentConversation} online={currentConversation.online} /></div><div className="min-w-0 pr-3"><div className="truncate text-base font-bold text-[#f1f5ef] sm:text-lg">{currentConversation.name}</div><div className="flex items-center gap-1.5 text-xs text-[#a4b2b5]"><span className="h-1.5 w-1.5 rounded-full bg-[#9fd17b]" /> {currentConversation.online ? "online" : "last seen recently"}</div></div></div></div><div className="flex items-center gap-1"><button className="focus-ring rounded-full p-3 text-[#e6eeee] hover:bg-white/10 hover:text-white" onClick={() => toast("Search within this conversation") } aria-label="Search conversation"><Search className="h-5 w-5" /></button><button className="focus-ring grid h-12 w-12 place-items-center rounded-full border border-[#b9d5df]/15 bg-[#243646]/90 text-[#edf4f1] hover:bg-[#314a5b]" onClick={() => toast("Conversation details coming next") } aria-label="Conversation details"><MoreHorizontal className="h-6 w-6" /></button></div></div>
-    <div className="flex items-center justify-between border-b border-[#c0dd94]/8 bg-[#172c22]/60 px-4 py-2.5 text-[11px] sm:px-6"><div className="flex items-center gap-2 text-[#9faf95]"><Languages className="h-3.5 w-3.5 text-[#accf77]" /> Translation is on <span className="text-[#7f977e]">· Burmese</span></div><button onClick={() => setShowTranslation((v) => !v)} className={`rounded-full px-2.5 py-1 font-semibold transition ${showTranslation ? "bg-[#9ec46d]/15 text-[#bce28a]" : "bg-white/5 text-[#819581]"}`}>{showTranslation ? "ON" : "OFF"}</button></div>
-    <div className="chat-wallpaper scrollbar-thin flex-1 space-y-4 overflow-y-auto px-4 py-6 sm:px-8">
-      <div className="mx-auto mb-6 flex max-w-md items-center gap-3 text-[10px] uppercase tracking-[.2em] text-[#758d78]"><div className="h-px flex-1 bg-[#aecb7c]/10" /> Today <div className="h-px flex-1 bg-[#aecb7c]/10" /></div>
-      {messages.map((message) => { const mine = message.from === "me"; const isTranslated = translatedIds.includes(message.id); return <div key={message.id} className={`flex animate-float-in ${mine ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] sm:max-w-[72%] ${mine ? "items-end" : "items-start"}`}><div className={`rounded-[20px] px-4 py-3 text-sm leading-6 shadow-sm ${mine ? "rounded-br-md bg-[#9fbe69] text-[#172217]" : "rounded-bl-md border border-[#d6af73]/18 wood-grain text-[#f2e8d4]"}`}><div>{message.text}</div>{showTranslation && message.translated && isTranslated && <div className={`mt-2 border-t pt-2 text-xs leading-5 ${mine ? "border-[#28451f]/20 text-[#385235]" : "border-[#e4c48e]/15 text-[#c5cda9]"}`}><span className="mr-1 text-[9px] font-bold uppercase tracking-wider opacity-70">tran</span>{message.translated}</div>}</div><div className={`mt-1.5 flex items-center gap-2 text-[10px] text-[#829a84] ${mine ? "justify-end" : "justify-start"}`}><span>{message.time}</span>{message.translated && <button onClick={() => translate(message)} className="font-semibold text-[#abc978] hover:text-[#d4eea6]">{isTranslated ? "hide tran" : "tran"}</button>}{mine && <Check className="h-3 w-3 text-[#9fc76b]" />}</div></div></div>; })}
-    </div>
-    <div className="chat-composer shrink-0 border-t border-[#c0dd94]/10 p-3 sm:p-4"><div className="flex items-end gap-2 rounded-[24px] border border-[#c8dd9b]/15 bg-[#1a2b3a]/90 p-2 shadow-[0_8px_26px_rgba(0,0,0,.2)]"><button className="focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#b6c4c5] hover:bg-white/5 hover:text-[#e2efdd]" onClick={() => toast("Attach a file in the next build") } aria-label="Attach file"><Paperclip className="h-5 w-5" /></button><textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} rows={1} placeholder="Message" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-1 py-2 text-base text-[#e8efde] outline-none placeholder:text-[#89999d]" /><button className={`grid h-10 w-10 shrink-0 place-items-center rounded-full transition active:scale-95 ${draft.trim() ? "bg-[#5ea8ec] text-white hover:bg-[#73b8f3]" : "bg-[#5ea8ec] text-white"}`} onClick={sendMessage} aria-label="Send message"><Send className="h-5 w-5" /></button></div><div className="mt-2 flex items-center justify-between px-2 text-[10px] text-[#82969a]"><span>Enter to send · Shift + Enter for a new line</span><span className="flex items-center gap-1"><Shield className="h-3 w-3" /> private</span></div></div>
+    <div className="flex shrink-0 items-center justify-between border-b border-[#c0dd94]/8 bg-[#172c22]/60 px-4 py-2.5 text-[11px] sm:px-6"><div className="flex items-center gap-2 text-[#9faf95]"><Languages className="h-3.5 w-3.5 text-[#accf77]" /> Translation is on <span className="text-[#7f977e]">· Burmese</span></div><button onClick={() => setShowTranslation((v) => !v)} className={`rounded-full px-2.5 py-1 font-semibold transition ${showTranslation ? "bg-[#9ec46d]/15 text-[#bce28a]" : "bg-white/5 text-[#819581]"}`}>{showTranslation ? "ON" : "OFF"}</button></div>
+    <div className="chat-wallpaper scrollbar-thin flex-1 space-y-4 overflow-y-auto px-4 py-6 sm:px-8"><div className="mx-auto mb-6 flex max-w-md items-center gap-3 text-[10px] uppercase tracking-[.2em] text-[#758d78]"><div className="h-px flex-1 bg-[#aecb7c]/10" /> Today <div className="h-px flex-1 bg-[#aecb7c]/10" /></div>{messages.map((message) => { const mine = message.from === "me"; const isTranslated = translatedIds.includes(message.id); return <div key={message.id} className={`flex animate-float-in ${mine ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] sm:max-w-[72%] ${mine ? "items-end" : "items-start"}`}><div className={`rounded-[20px] px-4 py-3 text-sm leading-6 shadow-sm ${mine ? "rounded-br-md bg-[#9fbe69] text-[#172217]" : "rounded-bl-md border border-[#d6af73]/18 wood-grain text-[#f2e8d4]"}`}>{message.kind === "image" && message.mediaUrl ? <img src={message.mediaUrl} alt={message.mediaName || "Attached image"} className="max-h-72 max-w-full rounded-xl object-cover" /> : message.kind === "voice" && message.mediaUrl ? <div className="min-w-[220px]"><div className="mb-1 text-xs font-semibold">Voice message</div><audio controls src={message.mediaUrl} className="h-9 w-full" /></div> : <div>{message.text}</div>}{showTranslation && message.translated && isTranslated && <div className={`mt-2 border-t pt-2 text-xs leading-5 ${mine ? "border-[#28451f]/20 text-[#385235]" : "border-[#e4c48e]/15 text-[#c5cda9]"}`}><span className="mr-1 text-[9px] font-bold uppercase tracking-wider opacity-70">tran</span>{message.translated}</div>}</div><div className={`mt-1.5 flex items-center gap-2 text-[10px] text-[#829a84] ${mine ? "justify-end" : "justify-start"}`}><span>{message.time}</span>{message.translated && <button onClick={() => translate(message)} className="font-semibold text-[#abc978] hover:text-[#d4eea6]">{isTranslated ? "hide tran" : "tran"}</button>}{mine && <Check className="h-3 w-3 text-[#9fc76b]" />}</div></div></div>; })}</div>
+    <div className="chat-composer shrink-0 border-t border-[#c0dd94]/10 p-3 sm:p-4"><input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelected} className="hidden" /><div className="flex items-end gap-2 rounded-[24px] border border-[#c8dd9b]/15 bg-[#1a2b3a]/90 p-2 shadow-[0_8px_26px_rgba(0,0,0,.2)]"><button className="focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#b6c4c5] hover:bg-white/5 hover:text-[#e2efdd]" onClick={() => fileInputRef.current?.click()} aria-label="Attach image"><ImagePlus className="h-5 w-5" /></button><textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} rows={1} placeholder={recording ? "Recording voice message…" : "Message"} disabled={recording} className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-1 py-2 text-base text-[#e8efde] outline-none placeholder:text-[#89999d] disabled:opacity-60" /><button className={`focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-full transition active:scale-95 ${recording ? "bg-[#e46767] text-white" : "text-[#b6c4c5] hover:bg-white/5 hover:text-[#e2efdd]"}`} onClick={recording ? stopRecording : startRecording} aria-label={recording ? "Stop recording" : "Record voice message"}>{recording ? <Square className="h-4 w-4 fill-current" /> : <Mic className="h-5 w-5" />}</button><button className={`focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-full transition active:scale-95 ${draft.trim() ? "bg-[#5ea8ec] text-white hover:bg-[#73b8f3]" : "bg-[#5ea8ec] text-white"}`} onClick={sendMessage} aria-label="Send message"><Send className="h-5 w-5" /></button></div><div className="mt-2 flex items-center justify-between px-2 text-[10px] text-[#82969a]"><span>{recording ? "Tap the red square to send voice" : "Attach image · hold a voice note · Enter to send"}</span><span className="flex items-center gap-1"><Shield className="h-3 w-3" /> private</span></div></div>
   </div>;
 }
 
